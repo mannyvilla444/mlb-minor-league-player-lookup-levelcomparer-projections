@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ query }} — MLB Level Stats{% endblock %}
+
+{% block content %}
+<section class="panel">
+  {% if matches %}
+    <h1 class="page-title">{{ matches | length }} players match “{{ query }}”</h1>
+    <p class="lede">Pick the one you meant.</p>
+    <ul class="match-list">
+      {% for m in matches %}
+      <li>
+        <a href="/player/{{ m.person_id }}" data-loading>
+          <span class="match-name">{{ m.full_name }}</span>
+          <span class="match-meta">
+            {% if m.subtitle %}{{ m.subtitle }} · {% endif %}id {{ m.person_id }}
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <h1 class="page-title">No match for “{{ query }}”</h1>
+    <p class="lede">No match. Try last name, first name.</p>
+  {% endif %}
+
+  <form class="search search-inline" action="/search" method="get" data-loading>
+    <input name="q" type="search" value="{{ query }}" placeholder="Player name" autocomplete="off" required>
+    <button type="submit">Search again</button>
+  </form>
+</section>
+{% endblock %}

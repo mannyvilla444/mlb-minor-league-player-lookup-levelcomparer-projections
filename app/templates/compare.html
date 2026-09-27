@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}Compare levels — MLB Level Stats{% endblock %}
+
+{% macro chip(code) -%}
+<span class="chip chip-{{ code | replace('+','plus') | replace('-','minus') }}">{{ code }}</span>
+{%- endmacro %}
+
+{% block content %}
+<section class="{{ 'compare-head' if result else 'hero' }}">
+  {% if not result %}
+  <h1>How much does the bat lose on the way up?</h1>
+  <p class="lede">
+    Paste a list of hitters. The app pulls every player's career line at two
+    levels and differences them — <strong>higher level minus lower</strong> —
+    then reports the mean and median of each gap across the group.
+  </p>
+  {% else %}
+  <h1 class="page-title">{{ result.high_code }} − {{ result.low_code }}</h1>
+  <p class="player-meta">
+    {{ result.included_count }} of {{ result.rows | length }} players in the
+    mean and median{% if result.apply_filter %}, filtered at {{ result.min_pa }}
+    {{ result.low_code }} PA{% endif %}.
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <form class="compare-form" action="/compare" method="post" data-loading id="compare-form">
+    <div class="field field-wide">
+      <label for="players">Players — one per line</label>
+      <textarea id="players" name="players" rows="{{ 6 if result else 9 }}"
+                placeholder="Elly De La Cruz&#10;Bobby Witt Jr.&#10;Corbin Carroll&#10;682829">{{ players_text }}</textarea>
+      <p class="hint">
+        Names are not split on commas, so “Smith, Will” works. A bare MLBAM id
+        works too — that is how you pin down an ambiguous name. Max
+        {{ max_players }} players per run.
+      </p>
+    </div>
+
+    <div class="controls">
+      <div class="field">
+        <label for="pair">Levels to compare</label>
+        <select id="pair" name="pair" onchange="if(this.form.players.value.trim()) this.form.submit()">
+          {% for p in pairs %}
+          <option value="{{ p.key }}" {{ 'selected' if p.key == pair_key else '' }}>
+            {{ p.high.code }} vs {{ p.low.code }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field field-check">
+        <label class="checkline">
+          <input type="checkbox" name="exclude" {{ 'checked' if apply_filter else '' }}
+                 onchange="if(this.form.players.value.trim()) this.form.submit()">
+          <span>Exclude players under</span>
+        </label>
+        <input class="pa-input" type="number" name="min_pa" min="0" step="10" value="{{ min_pa }}"
+               aria-label="Minimum plate appearances">
+        <span class="checkline-tail">PA at the lower level</span>
+      </div>
+
+      <button type="submit">{{ "Recalculate" if result else "Compare" }}</button>
+    </div>
+  </form>
+  <p class="fineprint">
+    The cutoff is checked on the <strong>lower</strong> level only. A player with
+    900 MLB PA and 40 Triple-A PA is dropped: the gap is only as trustworthy as
+    its smaller sample. Excluded players still appear in the table, greyed out,
+    so nothing disappears silently.
+  </p>
+</section>
+
+{% if not result %}
+<a class="crosslink" href="/">
+  <span class="crosslink-body">
+    <strong>Look up one player</strong>
+    Every level for a single hitter, season by season, with a career-by-level
+    summary underneath.
+  </span>
+  <span class="crosslink-arrow" aria-hidden="true">→</span>
+</a>
+{% endif %}
+
+{% if warning %}
+<p class="banner banner-warn">{{ warning }}</p>
+{% endif %}
+
+{% if result %}
+{% if result.failed_sport_ids %}
+<p class="banner banner-warn">
+  Some level requests failed (sportId {{ result.failed_sport_ids | join(', ') }}).
+  Rows that needed them may be missing a side — recalculate to retry.
+</p>
+{% endif %}
+
+<section class="panel">
+  <h2>Differentials</h2>
+  {% if not result.rows %}
+    <p class="lede">No players resolved from that list.</p>
+  {% else %}
+  <div class="table-scroll">
+    <table class="stat-table compact diff-table">
+      <thead>
+        <tr class="group-row">
+          <th class="left" rowspan="2">Player</th>
+          <th colspan="5" class="group group-high">{{ chip(result.high_code) }}</th>
+          <th colspan="5" class="group group-low">{{ chip(result.low_code) }}</th>
+          <th colspan="4" class="group group-diff">Difference ({{ result.high_code }} − {{ result.low_code }}) · rates in pp</th>
+        </tr>
+        <tr>
+          <th>PA</th><th>OPS</th><th>SLG</th><th>BB%</th><th>K%</th>
+          <th class="group-start">PA</th><th>OPS</th><th>SLG</th><th>BB%</th><th>K%</th>
+          <th class="group-start">OPS</th><th>SLG</th><th>BB%</th><th>K%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in result.rows %}
+        <tr class="{{ '' if row.included else 'row-excluded' }}">
+          <td class="left player-cell">
+            <a href="/player/{{ row.player.person_id }}">{{ row.player.full_name }}</a>
+            {% if row.note %}<span class="excl-note">{{ row.note }}</span>{% endif %}
+          </td>
+
+          {% if row.high %}
+          <td>{{ row.high.plate_appearances | int_ }}</td>
+          <td>{{ row.high.ops | slash }}</td>
+          <td>{{ row.high.slg | slash }}</td>
+          <td>{{ row.high.walk_rate | rate }}</td>
+          <td>{{ row.high.strikeout_rate | rate }}</td>
+          {% else %}
+          <td colspan="5" class="muted na">no {{ result.high_code }} record</td>
+          {% endif %}
+
+          {% if row.low %}
+          <td class="group-start">{{ row.low.plate_appearances | int_ }}</td>
+          <td>{{ row.low.ops | slash }}</td>
+          <td>{{ row.low.slg | slash }}</td>
+          <td>{{ row.low.walk_rate | rate }}</td>
+          <td>{{ row.low.strikeout_rate | rate }}</td>
+          {% else %}
+          <td colspan="5" class="muted na group-start">no {{ result.low_code }} record</td>
+          {% endif %}
+
+          {% for key, label, kind, good in metrics %}
+          <td class="delta {{ row.deltas[key] | sign_class(good) }} {{ 'group-start' if loop.first else '' }}">
+            {{ row.deltas[key] | delta(kind) }}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="summary-row summary-first">
+          <th class="left" colspan="11">Mean</th>
+          {% for key, label, kind, good in metrics %}
+          <td class="delta {{ result.mean[key] | sign_class(good) }} {{ 'group-start' if loop.first else '' }}">
+            {{ result.mean[key] | delta(kind) }}
+          </td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row">
+          <th class="left" colspan="11">Median</th>
+          {% for key, label, kind, good in metrics %}
+          <td class="delta {{ result.median[key] | sign_class(good) }} {{ 'group-start' if loop.first else '' }}">
+            {{ result.median[key] | delta(kind) }}
+          </td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-spread">
+          <th class="left" colspan="11">SD <span class="row-note">spread across players</span></th>
+          {% for key, label, kind, good in metrics %}
+          <td class="{{ 'group-start' if loop.first else '' }}">{{ result.stats[key].sd | spread(kind) }}</td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-spread">
+          <th class="left" colspan="11">SE of mean <span class="row-note">SD ÷ √n</span></th>
+          {% for key, label, kind, good in metrics %}
+          <td class="{{ 'group-start' if loop.first else '' }}">± {{ result.stats[key].se_mean | spread(kind) }}</td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-spread">
+          <th class="left" colspan="11">SE of median <span class="row-note">bootstrap, 2,000 resamples</span></th>
+          {% for key, label, kind, good in metrics %}
+          <td class="{{ 'group-start' if loop.first else '' }}">± {{ result.stats[key].se_median | spread(kind) }}</td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-quartile summary-first">
+          <th class="left" colspan="11">Q1 <span class="row-note">25th percentile</span></th>
+          {% for key, label, kind, good in metrics %}
+          <td class="delta {{ result.stats[key].q1 | sign_class(good) }} {{ 'group-start' if loop.first else '' }}">
+            {{ result.stats[key].q1 | delta(kind) }}
+          </td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-quartile">
+          <th class="left" colspan="11">Q3 <span class="row-note">75th percentile</span></th>
+          {% for key, label, kind, good in metrics %}
+          <td class="delta {{ result.stats[key].q3 | sign_class(good) }} {{ 'group-start' if loop.first else '' }}">
+            {{ result.stats[key].q3 | delta(kind) }}
+          </td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-quartile">
+          <th class="left" colspan="11">IQR <span class="row-note">Q3 − Q1</span></th>
+          {% for key, label, kind, good in metrics %}
+          <td class="{{ 'group-start' if loop.first else '' }}">{{ result.stats[key].iqr | spread(kind) }}</td>
+          {% endfor %}
+        </tr>
+        <tr class="summary-row summary-n">
+          <th class="left" colspan="11">Players in sample (n)</th>
+          {% for key, label, kind, good in metrics %}
+          <td class="{{ 'group-start' if loop.first else '' }}">{{ result.counts[key] }}</td>
+          {% endfor %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="fineprint">
+    OPS and SLG differences are in points; BB% and K% differences are in
+    <strong>percentage points</strong> (a 22.0% K% against 18.0% shows as +4.0,
+    not +22%). <span class="delta pos">Green</span> means the bat was better at
+    the higher level and <span class="delta neg">red</span> worse — so on K%,
+    where fewer is better, the colours flip. n is counted per column: a player
+    can have a usable ΔOPS but no ΔBB% if the API omitted walks on one side.
+    <strong>SD</strong> is how spread out the players are; <strong>SE</strong> is
+    how precisely the centre itself is pinned down — a big SD with a small SE
+    means a noisy population but a well-estimated average. The median's SE is
+    bootstrapped rather than assuming a normal distribution, and it is seeded, so
+    reloading the page never changes it.
+    {% if result.excluded_count %}
+    {{ result.excluded_count }} row{{ '' if result.excluded_count == 1 else 's' }}
+    greyed out and left out of the summary.
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+
+{% if result.included_count >= 2 %}
+<section class="panel">
+  <h2>Distribution of each difference</h2>
+  <p class="lede chart-lede">
+    One panel per metric, each on <strong>its own scale</strong> — OPS and SLG
+    differences are in points, BB% and K% in percentage points, so a shared axis
+    would invent a comparison that is not in the data.
+  </p>
+
+  <ul class="bp-legend">
+    <li><svg class="bp-key" viewBox="0 0 26 14" aria-hidden="true"><rect x="1.5" y="3" width="23" height="8" rx="1.5" fill="#2F6EA8" fill-opacity="0.13" stroke="#2F6EA8" stroke-width="1.25" stroke-opacity="0.85"/></svg> Q1 to Q3 (middle half)</li>
+    <li><svg class="bp-key" viewBox="0 0 26 14" aria-hidden="true"><line x1="13" y1="1" x2="13" y2="13" stroke="#2F6EA8" stroke-width="3.25"/></svg> Median</li>
+    <li><svg class="bp-key" viewBox="0 0 26 14" aria-hidden="true"><polygon points="13,1.5 19.5,7 13,12.5 6.5,7" fill="#B1442B"/></svg> Mean</li>
+    <li><svg class="bp-key" viewBox="0 0 26 14" aria-hidden="true"><line x1="2" y1="7" x2="24" y2="7" stroke="#2F6EA8" stroke-width="2" stroke-linecap="round"/><line x1="2.5" y1="3" x2="2.5" y2="11" stroke="#2F6EA8" stroke-width="2"/><line x1="23.5" y1="3" x2="23.5" y2="11" stroke="#2F6EA8" stroke-width="2"/></svg> Whiskers (1.5 × IQR)</li>
+    <li><svg class="bp-key" viewBox="0 0 26 14" aria-hidden="true"><circle cx="13" cy="7" r="3.6" fill="#fff"/><circle cx="13" cy="7" r="2.4" fill="none" stroke="#2F6EA8" stroke-width="1.5"/></svg> Outlier</li>
+    <li><svg class="bp-key" viewBox="0 0 26 14" aria-hidden="true"><circle cx="6" cy="7" r="1.7" fill="#2F6EA8" fill-opacity="0.45"/><circle cx="13" cy="7" r="1.7" fill="#2F6EA8" fill-opacity="0.45"/><circle cx="19" cy="7" r="1.7" fill="#2F6EA8" fill-opacity="0.45"/></svg> One dot per player</li>
+  </ul>
+
+  <div class="bp-grid">
+    {% for key, label, kind, good in metrics %}
+    {% set d = result.stats[key] %}
+    <figure class="bp-panel">
+      <figcaption>
+        <span class="bp-title">{{ label }}</span>
+        <span class="bp-units">{{ kind | unit_label }} · n {{ d.n }}</span>
+      </figcaption>
+      {% if d.has_box %}
+        {{ d | boxplot(kind, label) }}
+        <p class="bp-readout">
+          <span>Q1 <b>{{ d.q1 | delta(kind) }}</b></span>
+          <span>Med <b>{{ d.median | delta(kind) }}</b></span>
+          <span>Mean <b>{{ d.mean | delta(kind) }}</b></span>
+          <span>Q3 <b>{{ d.q3 | delta(kind) }}</b></span>
+          <span class="bp-readout-iqr">IQR <b>{{ d.iqr | spread(kind) }}</b></span>
+        </p>
+      {% else %}
+        <p class="bp-empty">Needs at least 2 players with this metric on both levels.</p>
+      {% endif %}
+    </figure>
+    {% endfor %}
+  </div>
+
+  <p class="fineprint">
+    Quartiles use linear interpolation (numpy default, type 7), which matches
+    Excel's <code>QUARTILE.INC</code>. Whiskers reach the most extreme player
+    still within 1.5 × IQR of the box; anything past that is drawn as a hollow
+    outlier dot and is <strong>still counted</strong> in the mean, median and SD.
+    The grey hairline is zero — no difference between the two levels.
+    Hover any mark for its exact value.
+  </p>
+</section>
+{% endif %}
+
+{% if result.unresolved %}
+<section class="panel">
+  <h2>Unresolved ({{ result.unresolved | length }})</h2>
+  <p class="lede">
+    These lines did not resolve to exactly one player, so they were left out
+    rather than guessed at. Paste the MLBAM id back into the list to pin one down.
+  </p>
+  <ul class="unresolved-list">
+    {% for entry in result.unresolved %}
+    <li>
+      <div class="unresolved-head">
+        <span class="unresolved-query">{{ entry.query }}</span>
+        <span class="unresolved-reason">{{ entry.reason }}</span>
+      </div>
+      {% if entry.candidates %}
+      <div class="candidates">
+        {% for c in entry.candidates %}
+        <a href="/player/{{ c.person_id }}" class="candidate">
+          {{ c.full_name }}<span class="candidate-id">{{ c.person_id }}</span>
+          {% if c.subtitle %}<span class="candidate-meta">{{ c.subtitle }}</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
