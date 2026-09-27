@@ -1,0 +1,342 @@
+{% extends "base.html" %}
+{% block title %}Projection — MLB Level Stats{% endblock %}
+
+{% macro actual_cells(entry, span) -%}
+{%- if entry.actual -%}
+<td class="group-start" rowspan="{{ span }}">{{ entry.actual.ops | slash }}</td>
+<td rowspan="{{ span }}">{{ entry.actual.slg | slash }}</td>
+<td rowspan="{{ span }}">{{ entry.actual.walk_rate | rate }}</td>
+<td rowspan="{{ span }}">{{ entry.actual.strikeout_rate | rate }}</td>
+{%- else -%}
+<td colspan="4" rowspan="{{ span }}" class="muted na group-start">no MLB PA yet</td>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro chip(code) -%}
+<span class="chip chip-{{ code | replace('+','plus') | replace('-','minus') }}">{{ code }}</span>
+{%- endmacro %}
+
+{% block content %}
+<section class="{{ 'compare-head' if result else 'hero' }}">
+  {% if not result %}
+  <h1>What would this bat do in the majors?</h1>
+  <p class="lede">
+    Paste a list of hitters. Each one gets <strong>a projection per level</strong>
+    — Triple-A, Double-A and High-A — built from their career line in whichever
+    league they played most at that level, plus that league's supplied mean
+    change. Three rungs, three answers, so you can see whether they agree.
+  </p>
+  {% else %}
+  <h1 class="page-title">Projected MLB lines</h1>
+  <p class="player-meta">
+    {{ result.projected_line_count }} level line{{ '' if result.projected_line_count == 1 else 's' }}
+    across {{ result.projected_player_count }} of {{ result.players | length }} players{%
+      if result.apply_filter %}, filtered at {{ result.min_pa }} PA per level{% endif %}{%
+      if result.scored_player_count %} · {{ result.scored_player_count }} already have MLB
+    numbers to check against{% endif %}.
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <form class="compare-form" action="/projection" method="post" data-loading>
+    <div class="field field-wide">
+      <label for="players">Players — one per line</label>
+      <textarea id="players" name="players" rows="{{ 6 if result else 9 }}"
+                placeholder="Roman Anthony&#10;Marcelo Mayer&#10;Coby Mayo&#10;Dylan Crews&#10;682829">{{ players_text }}</textarea>
+      <p class="hint">
+        Names are not split on commas, so “Smith, Will” works. A bare MLBAM id
+        works too. Max {{ max_players }} players per run.
+      </p>
+    </div>
+
+    <div class="controls">
+      <div class="field field-check">
+        <label class="checkline">
+          <input type="checkbox" name="exclude" {{ 'checked' if apply_filter else '' }}
+                 onchange="if(this.form.players.value.trim()) this.form.submit()">
+          <span>Skip any level under</span>
+        </label>
+        <input class="pa-input" type="number" name="min_pa" min="0" step="10" value="{{ min_pa }}"
+               aria-label="Minimum plate appearances at a level">
+        <span class="checkline-tail">PA — checked per level, not per player</span>
+      </div>
+      <button type="submit">{{ "Recalculate" if result else "Project" }}</button>
+    </div>
+  </form>
+  <p class="fineprint">
+    Only Triple-A, Double-A and High-A are projected — those are the levels the
+    translation table covers. Within a level, the league with the most plate
+    appearances is used, and its own line is translated by its own delta rather
+    than blending two leagues together. Lower levels and foreign leagues are
+    ignored; a league the table does not recognise is named rather than swapped
+    for a substitute.
+  </p>
+</section>
+
+{% if not result %}
+<section class="panel">
+  <h2>The translation applied</h2>
+  <p class="subtle">
+    One of these is picked per player <em>per level</em>, by whichever league at
+    that level they have the most plate appearances in.
+  </p>
+  <div class="table-scroll">
+    <table class="stat-table compact">
+      <thead>
+        <tr>
+          <th class="left">League</th><th class="left">Level</th>
+          <th>Δ OPS</th><th>Δ SLG</th><th>Δ BB% pp</th><th>Δ K% pp</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in translations %}
+        <tr>
+          <td class="left player-cell">{{ t.name }}</td>
+          <td class="left">{{ chip(t.level_code) }}</td>
+          <td class="delta neg">{{ t.d_ops | delta('slash') }}</td>
+          <td class="delta neg">{{ t.d_slg | delta('slash') }}</td>
+          <td class="delta">{{ (t.d_bb / 100) | delta('rate') }}</td>
+          <td class="delta">{{ (t.d_k / 100) | delta('rate') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="fineprint">
+    These are author-supplied league averages, shown in full on the
+    <a href="/translations">Translations</a> tab. They are a descriptive
+    adjustment, not a forecast — no age, park, competition or playing-time model
+    is involved.
+  </p>
+</section>
+{% endif %}
+
+{% if warning %}
+<p class="banner banner-warn">{{ warning }}</p>
+{% endif %}
+
+{% if result %}
+{% if result.failed_sport_ids %}
+<p class="banner banner-warn">
+  Some level requests failed (sportId {{ result.failed_sport_ids | join(', ') }}).
+  A player's dominant league may be wrong if the level it lives at did not load.
+</p>
+{% endif %}
+
+<section class="panel">
+  <h2>Projections</h2>
+  {% if not result.players %}
+    <p class="lede">No players resolved from that list.</p>
+  {% else %}
+  <div class="table-scroll">
+    <table class="stat-table compact proj-table">
+      <thead>
+        <tr class="group-row">
+          <th class="left" rowspan="2">Player</th>
+          <th class="left" rowspan="2">Level &amp; league</th>
+          <th colspan="5" class="group">Career there</th>
+          <th colspan="4" class="group group-proj">Projected MLB</th>
+          <th colspan="4" class="group">Actual MLB</th>
+        </tr>
+        <tr>
+          <th>PA</th><th>OPS</th><th>SLG</th><th>BB%</th><th>K%</th>
+          <th class="group-start">OPS</th><th>SLG</th><th>BB%</th><th>K%</th>
+          <th class="group-start">OPS</th><th>SLG</th><th>BB%</th><th>K%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in result.players %}
+        {% if not entry.has_levels %}
+        <tr class="row-excluded player-start">
+          <td class="left player-cell">
+            <a href="/player/{{ entry.player.person_id }}">{{ entry.player.full_name }}</a>
+            <span class="excl-note">{{ entry.note }}</span>
+          </td>
+          <td class="left league-cell"><span class="muted na">—</span></td>
+          <td colspan="5" class="muted na">no qualifying minor-league record</td>
+          <td colspan="4" class="muted na group-start">not projected</td>
+          {{ actual_cells(entry, 1) }}
+        </tr>
+        {% else %}
+        {% for level in entry.levels %}
+        <tr class="{{ 'player-start' if loop.first else '' }} {{ '' if level.included else 'row-excluded' }}">
+          {% if loop.first %}
+          <td class="left player-cell" rowspan="{{ entry.row_count }}">
+            <a href="/player/{{ entry.player.person_id }}">{{ entry.player.full_name }}</a>
+            {% if entry.unmatched_leagues %}
+            <span class="excl-note">also: {{ entry.unmatched_leagues | join(', ') }} (not translated)</span>
+            {% endif %}
+          </td>
+          {% endif %}
+
+          <td class="left league-cell"
+              title="{{ level.source.league_name }}{% if level.source.span %}, {{ level.source.span }}{% endif %}">
+            {{ chip(level.level_code) }}
+            <span class="league-name">{{ level.source.short_name }}</span>
+            {% if level.is_close_call %}
+            <span class="close-call" title="Another league at this level is within 15% of these plate appearances">close</span>
+            {% endif %}
+            {% if level.note %}<span class="excl-note">{{ level.note }}</span>{% endif %}
+            {% if level.clamped %}<span class="excl-note">clamped: {{ level.clamped | join(', ') }}</span>{% endif %}
+          </td>
+
+          <td>{{ level.source.plate_appearances | int_ }}</td>
+          <td>{{ level.source.ops | slash }}</td>
+          <td>{{ level.source.slg | slash }}</td>
+          <td>{{ level.source.walk_rate | rate }}</td>
+          <td>{{ level.source.strikeout_rate | rate }}</td>
+
+          {% if level.included %}
+          <td class="group-start proj">{{ level.projected['ops'] | slash }}</td>
+          <td class="proj">{{ level.projected['slg'] | slash }}</td>
+          <td class="proj">{{ level.projected['bb'] | rate }}</td>
+          <td class="proj">{{ level.projected['k'] | rate }}</td>
+          {% else %}
+          <td colspan="4" class="muted na group-start">skipped</td>
+          {% endif %}
+
+          {% if loop.first %}{{ actual_cells(entry, entry.row_count) }}{% endif %}
+        </tr>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="fineprint">
+    Each metric is projected on its own: <code>projected = career stat in that
+    league + that league's Δ</code>. OPS is <strong>not</strong> rebuilt from the
+    projected SLG, so the two are independent estimates rather than an internally
+    consistent slash line — the source page makes the same point when it warns
+    against subtracting both changes from OPS.
+    A player's actual MLB line spans their level rows, because it is the same
+    line each level is trying to predict.
+    {% if result.skipped_line_count %}
+    {{ result.skipped_line_count }} level line{{ '' if result.skipped_line_count == 1 else 's' }}
+    greyed out and not projected.
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+
+{% if result.levels_with_scores %}
+<section class="panel">
+  <h2>Accuracy by level</h2>
+  <p class="subtle">
+    How each level's translation scored against the real MLB numbers of the
+    {{ result.scored_player_count }} player{{ '' if result.scored_player_count == 1 else 's' }}
+    who have them. This is the comparison three separate projections exist to make.
+  </p>
+  <div class="table-scroll">
+    <table class="stat-table compact accuracy-table">
+      <thead>
+        <tr class="group-row">
+          <th class="left" rowspan="2">Level</th>
+          <th rowspan="2">n</th>
+          {% for key, label, kind, good in metrics %}
+          <th colspan="2" class="group {{ 'group-start' if loop.first else '' }}">{{ label }}</th>
+          {% endfor %}
+        </tr>
+        <tr>
+          {% for key, label, kind, good in metrics %}
+          <th class="{{ 'group-start' if loop.first else '' }}">bias</th><th>miss</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for code in result.levels_with_scores %}
+        <tr>
+          <td class="left">{{ chip(code) }}</td>
+          <td>{{ result.residuals[code]['ops'].n }}</td>
+          {% for key, label, kind, good in metrics %}
+          {# No good/bad colour here: a residual's sign is the direction of the
+             miss, not a verdict on the player. Colouring it green would imply
+             "good" where it only means "the projection ran low". #}
+          <td class="delta {{ 'group-start' if loop.first else '' }}">
+            {{ result.residuals[code][key].mean | delta(kind) }}
+          </td>
+          <td class="muted">{{ result.mean_abs_residual[code][key] | spread(kind) }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="fineprint">
+    <strong>bias</strong> is the mean residual (actual − projected): negative
+    means the projection ran high. <strong>miss</strong> is the mean absolute
+    residual — how far off a typical single player was, in either direction. They
+    answer different questions, and a level can have near-zero bias while being
+    wrong about everybody. n counts level lines, so a player with all three rungs
+    contributes to all three rows.
+  </p>
+</section>
+{% endif %}
+
+{% set with_alternates = [] %}
+{% for entry in result.players %}
+  {% for level in entry.levels %}
+    {% if level.alternates %}{% set _ = with_alternates.append((entry, level)) %}{% endif %}
+  {% endfor %}
+{% endfor %}
+{% if with_alternates %}
+<section class="panel">
+  <h2>Other leagues at the same level</h2>
+  <p class="subtle">
+    Where a player appeared in more than one league at a level, this is what the
+    chosen one was picked over. “Close” above means the runner-up is within 15%
+    of the winner's plate appearances.
+  </p>
+  <ul class="other-leagues">
+    {% for entry, level in with_alternates %}
+    <li>
+      <span class="ol-player">{{ entry.player.full_name }}</span>
+      <span class="ol-chosen">
+        {{ chip(level.level_code) }} {{ level.source.short_name }}
+        <b>{{ level.source.plate_appearances | int_ }} PA</b>
+      </span>
+      <span class="ol-rest">
+        over
+        {% for other in level.alternates %}
+        {{ other.short_name }} {{ other.plate_appearances | int_ }} PA{{ "," if not loop.last }}
+        {% endfor %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if result.unresolved %}
+<section class="panel">
+  <h2>Unresolved ({{ result.unresolved | length }})</h2>
+  <p class="lede">
+    These lines did not resolve to exactly one player, so they were left out
+    rather than guessed at. Paste the MLBAM id back into the list to pin one down.
+  </p>
+  <ul class="unresolved-list">
+    {% for entry in result.unresolved %}
+    <li>
+      <div class="unresolved-head">
+        <span class="unresolved-query">{{ entry.query }}</span>
+        <span class="unresolved-reason">{{ entry.reason }}</span>
+      </div>
+      {% if entry.candidates %}
+      <div class="candidates">
+        {% for c in entry.candidates %}
+        <a href="/player/{{ c.person_id }}" class="candidate">
+          {{ c.full_name }}<span class="candidate-id">{{ c.person_id }}</span>
+          {% if c.subtitle %}<span class="candidate-meta">{{ c.subtitle }}</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

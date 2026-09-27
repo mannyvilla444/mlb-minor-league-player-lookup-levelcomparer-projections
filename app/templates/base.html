@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MLB Level Stats{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css?v={{ version }}">
+  <link rel="icon" href="/static/levelstats.ico?v={{ version }}">
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="/">
+      <span class="wordmark-mark"></span>
+      <span>Level&nbsp;Stats</span>
+    </a>
+    {% set path = request.url.path %}
+    {% set nav = [("/", "One player"), ("/compare", "Compare"),
+                  ("/projection", "Projection"), ("/translations", "Translations")] %}
+    {% set active = namespace(href="/") %}
+    {% for href, _label in nav %}
+      {% if href != "/" and path.startswith(href) %}{% set active.href = href %}{% endif %}
+    {% endfor %}
+    <nav class="tabs" aria-label="Sections">
+      {% for href, text in nav %}
+      {# aria-current must be emitted as markup, not as an escaped string value #}
+      <a href="{{ href }}" class="{{ 'is-active' if href == active.href else '' }}"
+         {% if href == active.href %}aria-current="page"{% endif %}>{{ text }}</a>
+      {% endfor %}
+    </nav>
+    <span class="masthead-note">v{{ version }} · MLB Stats API</span>
+  </header>
+
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    Level Stats v{{ version }} · Data:
+    <a href="https://statsapi.mlb.com" rel="noreferrer">MLB Stats API</a>
+    via the <code>MLB-StatsAPI</code> package. Unofficial; not endorsed by MLB.
+  </footer>
+
+  <div class="loading-veil" id="loading-veil" hidden>
+    <div class="loading-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="loading-title">Asking the MLB Stats API…</p>
+      <p class="loading-sub">Pulling year-by-year hitting for every level. First lookup takes a few seconds; after that it is cached.</p>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var veil = document.getElementById('loading-veil');
+      function show() { if (veil) veil.hidden = false; }
+      document.querySelectorAll('form[data-loading]').forEach(function (f) {
+        f.addEventListener('submit', function () {
+          var input = f.querySelector('input[name="q"]');
+          if (input && !input.value.trim()) return;
+          show();
+        });
+      });
+      document.querySelectorAll('a[data-loading]').forEach(function (a) {
+        a.addEventListener('click', show);
+      });
+      window.addEventListener('pageshow', function () { if (veil) veil.hidden = true; });
+    })();
+  </script>
+</body>
+</html>
